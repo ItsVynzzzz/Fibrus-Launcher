@@ -103,6 +103,7 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.material3)
     implementation(libs.kotlinx.coroutines.android)
+    implementation("androidx.compose.material:material-icons-extended") // versi dari Compose BOM
 
     debugImplementation(libs.androidx.ui.tooling)
 }

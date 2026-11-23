@@ -32,6 +32,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|smallestScreenSize|density|fontScale|locale|layoutDirection"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
@@ -78,6 +79,12 @@
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
             android:hardwareAccelerated="false"
             tools:ignore="MissingClass" />
+
+        <!-- Penjaga unduhan berkas game milik Fibrus (core/DownloadService.kt). -->
+        <service
+            android:name=".core.DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- Menjaga Starling di latar depan saat unduhan sumber daya atau penyiapan berjalan. -->
         <service

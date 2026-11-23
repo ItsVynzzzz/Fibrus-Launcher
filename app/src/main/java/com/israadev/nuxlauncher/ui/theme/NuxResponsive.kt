@@ -1,0 +1,178 @@
+package com.israadev.nuxlauncher.ui.theme
+
+import android.content.res.Configuration
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlin.math.max
+import kotlin.math.min
+
+/**
+ * NUX Adaptive DPI & Responsive Layout System
+ * 
+ * Automatically scales UI dimensions, typography, cards, paddings, and touch targets
+ * based on device screen DPI, display density, and physical landscape screen height/width.
+ * 
+ * Target baseline: 390dp landscape height and 740dp landscape width. The UI is scaled so the layout always fits
+ * inside BOTH (fit, not height only): phones with a limited width (16:9, nearly square foldable screens, 4:3
+ * tablets) are no longer drawn too big and cut off at the sides.
+ * Safely clamps scaling factors to prevent UI overflows on compact/high-DPI screens
+ * while expanding gracefully on large displays, foldables, and tablets.
+ */
+data class NuxScaleMetrics(
+    val scaleFactor: Float = 1.0f,
+    val fontScaleFactor: Float = 1.0f,
+    val isCompact: Boolean = false,
+    val isTablet: Boolean = false,
+    val screenWidthDp: Dp = 800.dp,
+    val screenHeightDp: Dp = 392.dp
+) {
+    fun scaledDp(value: Dp): Dp = (value.value * scaleFactor).dp
+    fun scaledSp(value: TextUnit): TextUnit = (value.value * fontScaleFactor).sp
+}
+
+val LocalNuxScale = staticCompositionLocalOf { NuxScaleMetrics() }
+
+/**
+ * Mengalikan skala dasar dengan pilihan pemain ([percent], 70 - 130). Mengecilkan selalu diizinkan.
+ * Memperbesar dibatasi lebar layar: Home butuh lebar rancangan sekitar 640 dp untuk bar navigasi dan
+ * tombol utama, jadi di layar sempit batas atasnya turun sendiri supaya tombol tidak terpotong.
+ */
+internal fun applyUserUiScale(base: Float, percent: Int, screenWidthDp: Float): Float {
+    if (percent == 100) return base
+    val wanted = base * percent / 100f
+    if (wanted <= base) return max(wanted, 0.5f)
+    return min(wanted, max(base, screenWidthDp / 640f))
+}
+
+/**
+ * Root Responsive Provider that calculates DPI-aware metrics and applies
+ * clamped accessibility font scaling to avoid container clipping.
+ */
+@Composable
+fun NuxResponsiveTheme(
+    content: @Composable () -> Unit
+) {
+    val configuration = LocalConfiguration.current
+    val systemDensity = LocalDensity.current
+
+    val screenHeightDp = configuration.screenHeightDp.dp
+    val screenWidthDp = configuration.screenWidthDp.dp
+
+    // Skala muat dalam tinggi dan lebar rancangan. Lebar rancangan 740 dp: Home butuh sekitar 650 dp untuk bar navigasi
+    // dan tombol utama, ditambah tepi layar dan area lubang kamera. Memakai tinggi saja membuat HP berlayar lebar-terbatas
+    // terlalu besar dan terpotong di samping.
+    val heightRatio = min(screenHeightDp.value / 390f, screenWidthDp.value / 740f)
+    
+    // Determine device form-factor
+    val isTablet = screenHeightDp >= 520.dp || configuration.smallestScreenWidthDp >= 600
+    val isCompact = screenHeightDp < 350.dp
+
+    // Smooth clamped scaling factor: 0.66f (ultra compact / high display zoom) .. 1.28f (tablets)
+    val baseScale = min(max(heightRatio, 0.66f), if (isTablet) 1.28f else 1.15f)
+
+    // Penyesuaian ukuran UI dari Pengaturan (100% = tepat skala di atas, tidak mengubah apa pun)
+    val userPercent = 100 /* FIBRUS: skala UI tetap 100% (Amber membacanya dari pengaturan) */
+    val scaleFactor = applyUserUiScale(baseScale, userPercent, screenWidthDp.value)
+
+    // Clamp system fontScale to a safe range [0.85f .. 1.15f] so extreme OS font accessibility
+    // settings do not shatter compact gaming launcher layouts while preserving readability
+    val clampedSystemFontScale = min(max(systemDensity.fontScale, 0.85f), 1.15f)
+    val combinedFontScale = scaleFactor * (clampedSystemFontScale / max(systemDensity.fontScale, 0.01f))
+
+    val metrics = NuxScaleMetrics(
+        scaleFactor = scaleFactor,
+        fontScaleFactor = scaleFactor * clampedSystemFontScale,
+        isCompact = isCompact,
+        isTablet = isTablet,
+        screenWidthDp = screenWidthDp,
+        screenHeightDp = screenHeightDp
+    )
+
+    // Provide modified Density with scaled density and clamped fontScale
+    // This automatically scales ALL dp and sp values across EVERY SCREEN, COMPONENT,
+    // CARD, BUTTON, and DIALOG in the application.
+    val responsiveDensity = Density(
+        density = systemDensity.density * scaleFactor,
+        fontScale = clampedSystemFontScale
+    )
+
+    CompositionLocalProvider(
+        LocalNuxScale provides metrics,
+        LocalDensity provides responsiveDensity
+    ) {
+        content()
+    }
+}
+
+/**
+ * Pengatur skala untuk layar selain Home (Akun, Mod, Pengaturan, dan dialog).
+ * - scale: pengali kerapatan (dp dan sp ikut mengecil/membesar bersama). 0.9 = semua 10% lebih
+ *   kecil dari skala dasar, jadi muat lebih banyak baris dan tidak terasa raksasa.
+ * - boost: pengali huruf saja (dipakai dialog lama yang hurufnya masih kecil). Dibatasi 1.3x.
+ * Warna isi bawaan (teks/ikon tanpa warna) juga disetel ke putih hangat supaya tidak hitam di
+ * atas latar gelap.
+ */
+@Composable
+fun NuxReadable(
+    scale: Float = 0.9f,
+    boost: Float = 1f,
+    content: @Composable () -> Unit
+) {
+    val current = LocalDensity.current
+    val readable = Density(
+        density = current.density * scale,
+        fontScale = min(current.fontScale * boost, 1.3f)
+    )
+    val alreadyScaled = LocalNuxScaled.current
+    CompositionLocalProvider(
+        LocalDensity provides readable,
+        LocalContentColor provides NuxColors.DarkGray,
+        LocalNuxScaled provides (alreadyScaled || scale != 1f)
+    ) {
+        content()
+    }
+}
+
+/** True bila sudah berada di dalam layar yang diskalakan NuxReadable (dialog tidak perlu mengecilkan lagi). */
+val LocalNuxScaled = compositionLocalOf { false }
+
+// -------------------------------------------------------------------------
+// Ergonomic Responsive Extensions for Dp, Int, Float, and TextUnit
+// -------------------------------------------------------------------------
+
+/**
+ * Responsive extension for Dp. Since responsiveDensity already applies scaleFactor
+ * globally to all DP conversions, this safely preserves the calibrated value.
+ */
+@Composable
+fun Dp.resp(): Dp = this
+
+/**
+ * Responsive extension for TextUnit (sp). Since responsiveDensity already applies
+ * font scaling globally to all SP conversions, this safely preserves the calibrated value.
+ */
+@Composable
+fun TextUnit.resp(): TextUnit = this
+
+@Composable
+fun Int.respDp(): Dp = this.dp
+
+@Composable
+fun Float.respDp(): Dp = this.dp
+
+@Composable
+fun Int.respSp(): TextUnit = this.sp
+
+@Composable
+fun Float.respSp(): TextUnit = this.sp
