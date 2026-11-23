@@ -1,0 +1,133 @@
+# Satu workflow untuk semuanya: mesin Rust Starling + APK.
+#  - Mesin hanya dibangun bila Release untuk konfigurasi sekarang (commit, patch, profil) belum ada. Selebihnya
+#    langsung memakai Release yang ada, jadi build berikutnya cepat (menit, bukan jam).
+#  - Mengubah starling-engine.properties atau third_party/horizon-patches/** otomatis berarti mesin baru.
+#  - Bila mesin gagal dibangun, APK tetap dibangun (tanpa mesin) supaya UI-nya bisa dicoba; run tetap ditandai gagal.
+#  - Profil mesin (release lambat / fast cepat) diatur di starling-engine.properties (profile=).
+name: Build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**", "LICENSE", ".gitignore"]
+  workflow_dispatch:
+    inputs:
+      force_engine:
+        description: Bangun ulang mesin walau Release-nya sudah ada
+        type: boolean
+        default: false
+      publish_apk:
+        description: Terbitkan APK sebagai pre-release di halaman Releases
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # menerbitkan Release mesin (dan APK bila dipilih)
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  GITHUB_REPOSITORY: ${{ github.repository }}
+  HORIZON_TELEMETRY_URL: "off"
+  # Fibrus hanya memakai Starling: skrip pembangun dipanggil langsung dalam mode "satu mesin".
+  AMBER_ENGINE_CHILD: "1"
+  AMBER_ENGINE: starling
+  HORIZON_ENGINE_CONFIG: ${{ github.workspace }}/starling-engine.properties
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v5
+
+      # ---- 1. Perlu membangun mesin? ----
+      - name: Cek Release mesin
+        id: engine
+        run: |
+          TAG="$(bash scripts/build-horizon-engine.sh --print-tag)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" >/dev/null 2>&1 && [ "${{ inputs.force_engine }}" != "true" ]; then
+            echo "need=false" >> "$GITHUB_OUTPUT"
+            echo "Release mesin $TAG sudah ada: dipakai langsung."
+            echo "### Mesin: sudah ada (\`$TAG\`)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "need=true" >> "$GITHUB_OUTPUT"
+            echo "Release mesin $TAG belum ada (atau force): mesin dibangun dulu."
+          fi
+
+      # ---- 2. Bangun mesin (hanya bila perlu) ----
+      # Eksporter tabel data proyek sumber dikompilasi dengan JDK yang dipatok proyek itu (Java 25).
+      - uses: actions/setup-java@v5
+        if: steps.engine.outputs.need == 'true'
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - name: Siapkan ruang disk
+        if: steps.engine.outputs.need == 'true'
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost || true
+          sudo mkdir -p /mnt/starling-engine && sudo chown "$USER" /mnt/starling-engine
+          df -h / /mnt
+
+      - name: Bangun dan terbitkan mesin
+        id: build_engine
+        if: steps.engine.outputs.need == 'true'
+        continue-on-error: true # APK tetap dibangun walau mesin gagal; hasilnya dinilai di langkah terakhir
+        env:
+          HORIZON_ENGINE_FORCE: ${{ inputs.force_engine }}
+          HORIZON_ENGINE_WORK: /mnt/starling-engine
+        run: bash scripts/build-horizon-engine.sh --publish
+
+      # ---- 3. Bangun APK (Gradle mengambil mesin dari Release lewat fetchStarlingEngine) ----
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Terima lisensi Android SDK
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Bangun APK
+        env:
+          # Child mode di atas hanya untuk skrip pembangun; Gradle/fetch memilih mesinnya sendiri.
+          AMBER_ENGINE_CHILD: ""
+          AMBER_ENGINE: ""
+          HORIZON_ENGINE_CONFIG: ""
+          FIBRUS_VERSION_NAME: 0.1.0-uji.${{ github.run_number }}
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Ganti nama APK
+        run: |
+          APK="$(ls app/build/outputs/apk/debug/*.apk | head -n 1)"
+          cp "$APK" "Fibrus-0.1.0-uji.${{ github.run_number }}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fibrus-APK
+          path: Fibrus-*.apk
+
+      - name: Terbitkan APK (opsional)
+        if: inputs.publish_apk == true
+        run: |
+          gh release create "apk-${{ github.run_number }}" Fibrus-*.apk \
+            --prerelease --title "Fibrus uji #${{ github.run_number }}" \
+            --notes "Build uji otomatis. Mesin: \`${{ steps.engine.outputs.tag }}\`."
+
+      # ---- 4. Nilai hasilnya ----
+      - name: Ringkasan
+        if: always()
+        run: |
+          if [ "${{ steps.build_engine.outcome }}" = "failure" ]; then
+            echo "::error title=Mesin gagal dibangun::APK tetap dibangun tetapi TANPA mesin Starling. Lihat langkah 'Bangun dan terbitkan mesin'."
+            echo "### Mesin gagal dibangun: APK ini tidak membawa mesin." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi

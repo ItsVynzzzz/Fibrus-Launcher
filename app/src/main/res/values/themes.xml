@@ -1,0 +1,17 @@
+<resources>
+    <style name="Theme.Fibrus" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#111111</item>
+        <item name="android:navigationBarColor">#111111</item>
+        <item name="android:windowBackground">#111111</item>
+        <item name="android:windowFullscreen">true</item>
+    </style>
+
+    <!-- Layar mesin: layar penuh, hitam sejak jendela pertama (tanpa kilatan putih sebelum permukaan siap). -->
+    <style name="StarlingGameTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:colorAccent">#FFD60A</item>
+    </style>
+</resources>
