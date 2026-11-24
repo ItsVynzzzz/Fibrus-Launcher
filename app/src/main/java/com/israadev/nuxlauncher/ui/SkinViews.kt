@@ -39,7 +39,8 @@ private fun DrawScope.part(
 /** Kepala (lapisan dalam + topi) dalam lingkaran: ikon akun. */
 @Composable
 fun AccountAvatar(modifier: Modifier = Modifier) {
-    val skin = remember { SkinSource.default(LocalContext.current) }
+    val context = LocalContext.current
+    val skin = remember { SkinSource.default(context) }
     Canvas(modifier.clip(CircleShape)) {
         part(skin, 8, 8, 8, 8, 0f, 0f, size.width, size.height)
         part(skin, 40, 8, 8, 8, 0f, 0f, size.width, size.height)
@@ -49,7 +50,8 @@ fun AccountAvatar(modifier: Modifier = Modifier) {
 /** Tubuh penuh tampak depan (16x32 piksel skin), digambar tajam dan ditaruh di tengah bawah ruangnya. */
 @Composable
 fun SkinFigure(modifier: Modifier = Modifier) {
-    val skin = remember { SkinSource.default(LocalContext.current) }
+    val context = LocalContext.current
+    val skin = remember { SkinSource.default(context) }
     Canvas(modifier) {
         val s = floor(minOf(size.width / 16f, size.height / 32f)).coerceAtLeast(1f)
         val ox = (size.width - 16f * s) / 2f
@@ -66,4 +68,3 @@ fun SkinFigure(modifier: Modifier = Modifier) {
         p(20, 36, 8, 12, 4, 8); p(40, 8, 8, 8, 4, 0)
     }
 }
-
