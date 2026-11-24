@@ -3,7 +3,11 @@ package com.israadev.nuxlauncher.starling
 import android.app.Activity
 
 /**
- * TITIK PASANG KONTROL FIBRUS. Sengaja kosong: tidak menggambar apa pun di atas game.
+ * Sengaja kosong, dan harus tetap ada: GameActivity hasil patch memanggilnya. Kontrol Fibrus TIDAK lewat sini lagi:
+ * Fibrus Pad berjalan di dalam mesin (patch fibrus1/0007-fibrus-pad.diff), tanpa jendela Android di atas game, tanpa JNI.
+ * Kelas ini hanya dipakai bila kamu ingin kontrol berbasis Android di atas game (lebih berat; Amber dulu begitu).
+ *
+ * Titik pasang kontrol Android. Tidak menggambar apa pun di atas game.
  *
  * Alurnya: launcher menulis AMBER_CONTROLS=1 ke horizon-args.txt (lihat StarlingLauncher). Dengan itu mesin
  * mematikan kontrol sentuh, tombol hub, dan menu pop-up miliknya sendiri (patch amber5/0005, game/mobile_controls.rs)

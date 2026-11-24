@@ -137,6 +137,25 @@ fun SettingsScreen(onNavigate: (String) -> Unit) {
             )
         }
         GlassCard {
+            Text("Controls", color = AmberUi.Text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            Text(
+                "Touch controls drawn and handled inside the engine, with no overlay. Takes effect the next time the game opens.",
+                color = AmberUi.TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)
+            )
+            Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PillButton("On", { UiPrefs.setPadOn(context, true) }, filled = UiPrefs.padOn)
+                PillButton("Off", { UiPrefs.setPadOn(context, false) }, filled = !UiPrefs.padOn)
+            }
+            Text("Camera speed: ${UiPrefs.lookSensPercent}%", color = AmberUi.TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
+            Slider(
+                value = UiPrefs.lookSensPercent.toFloat(),
+                onValueChange = { UiPrefs.setLookSens(context, it.toInt(), save = false) },
+                onValueChangeFinished = { UiPrefs.setLookSens(context, UiPrefs.lookSensPercent, save = true) },
+                valueRange = 40f..250f,
+                colors = SliderDefaults.colors(thumbColor = AmberUi.AccentSoft, activeTrackColor = AmberUi.AccentSoft, inactiveTrackColor = AmberUi.Border)
+            )
+        }
+        GlassCard {
             Text("Engine", color = AmberUi.Text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
             Text("Starling (Rust) · Minecraft ${StarlingLauncher.MC_VERSION}", color = AmberUi.TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
             Text(

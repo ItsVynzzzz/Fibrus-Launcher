@@ -51,19 +51,39 @@ Bila mesin gagal dibangun, APK tetap dibangun (tanpa mesin) dan run ditandai gag
 ## Kontrol kosong
 
 `StarlingLauncher` menulis `AMBER_CONTROLS=1` ke `horizon-args.txt`. Dengan itu mesin mematikan kontrol sentuh,
-tombol hub, dan menu pop-up bawaannya (patch `amber5/0005-amber-controls.diff`). Kontrol sendiri dipasang di
+tombol hub, dan menu pop-up bawaannya (patch `fibrus1/0005-amber-controls.diff`). Kontrol sendiri dipasang di
 `StarlingOverlay.attach()` lewat `StarlingBridge`, atau, lebih baik untuk performa, lewat patch Rust milikmu.
+
+## Kontrol: Fibrus Pad (di dalam mesin, tanpa beban)
+
+Kontrol lama tidak dipakai sama sekali (sistem kontrol mesin, editor, hub, dan overlay Android semuanya mati). Fibrus
+Pad adalah modul kecil di mesin (`third_party/horizon-patches/fibrus1/0007-fibrus-pad.diff`, file
+`game/mobile_controls/fibrus_pad.rs` dan `fibrus_pad/logic.rs`):
+
+- Sentuhan sudah tiba di thread game mesin, jadi langsung diolah di sana: tanpa JNI, tanpa jendela Android di atas game,
+  tanpa antrean/kunci, tanpa alokasi per sentuhan (larik tetap di tumpukan). Menyala hanya bila `FIBRUS_PAD` ada di
+  `horizon-args.txt` (launcher menulisnya; matikan di Settings > Controls). `FIBRUS_PAD_SENS` mengatur kecepatan kamera.
+- Tampilan: delapan pelat datar (JUMP, SNEAK, HIT, ESC, INV, CHAT, DROP, VIEW) dan stick yang hanya tampak saat
+  disentuh. Tidak ada tekstur, editor, atau pemuatan apa pun.
+- Layar kiri (42%): stick mengambang, di mana pun jari mendarat. Lewat sepertiga radius = jalan (8 arah); lewat radius
+  ke depan = lari. Sisanya: geser = putar kamera, ketuk = pakai/taruh, tahan 280 ms = tambang/pukul (kamera tetap
+  bisa diputar). Ketuk hotbar = pilih slot. Menu dan layar terbuka = sentuhan kembali ditangani mesin seperti biasa
+  dan semua tombol yang tertahan dilepas.
+- Logika murni (`logic.rs`, tanpa tipe mesin) punya 13 uji. Jalankan: `rustc --edition 2021 --test
+  crates/horizon-client/src/game/mobile_controls/fibrus_pad/logic.rs -o t && ./t` di sumber mesin yang sudah dipatch.
+- Mengubah tata letak atau tombol: `Screen::rect` dan `BUTTONS` di `logic.rs`. Tombol memakai token tombol milik game
+  (`key.keyboard.space`, dst.), jadi tombol baru cukup satu entri di `Btn`.
 
 ## Memodif mesin Rust
 
-1. Salin `third_party/horizon-patches/amber5` menjadi `fibrus1`, ganti `patch_set=fibrus1` di `starling-engine.properties`.
+1. Salin `third_party/horizon-patches/fibrus1` menjadi `fibrus1`, ganti `patch_set=fibrus1` di `starling-engine.properties`.
 2. Tambah/ubah file `.diff` (diterapkan berurutan nama). Hash isi patch ikut di tanda Release, jadi mengedit patch =
    mesin baru; jalankan lagi workflow mesin.
 3. Perubahan besar: pertimbangkan fork sumber mesin dan ganti `source_repo=` dan `commit=`.
 
 ## Mengganti nama paket
 
-`namespace` tetap `com.israadev.nuxlauncher` karena patch `amber5/0001` dan `0005` meng-import `R`, `BuildConfig`,
+`namespace` tetap `com.israadev.nuxlauncher` karena patch `fibrus1/0001` dan `0005` meng-import `R`, `BuildConfig`,
 `starling.*`, dan `discord.*` dari paket itu. Untuk menggantinya: ubah import di kedua diff, pindahkan folder Kotlin,
 lalu ganti `namespace` dan nama kelas di `AndroidManifest.xml` bila perlu. `applicationId` (`com.itsvynzzzz.fibrus`)
 bebas diganti.

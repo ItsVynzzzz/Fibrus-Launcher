@@ -1,0 +1,796 @@
+diff --git a/crates/horizon-client/src/game/mobile_controls.rs b/crates/horizon-client/src/game/mobile_controls.rs
+index 08f8f1b..ed15d9f 100644
+--- a/crates/horizon-client/src/game/mobile_controls.rs
++++ b/crates/horizon-client/src/game/mobile_controls.rs
+@@ -11,6 +11,7 @@ use horizon_client::{
+ };
+ use winit::event::{Touch, TouchPhase};
+ mod mobile_platform;
++mod fibrus_pad;
+ 
+ #[derive(Default)]
+ pub(super) struct MobileControls {
+@@ -208,6 +209,9 @@ impl Game<'_> {
+             self.mobile.ui.floating_menu = false;
+             self.android_poll_keyboard();
+             self.amber_pump();
++            if fibrus_pad::on() {
++                self.fibrus_frame();
++            }
+             return;
+         }
+         self.mobile.ui.hub_visible = self.mobile.controls.settings.show_control_hub;
+@@ -363,6 +367,9 @@ impl Game<'_> {
+         // AmberLauncher: no button of the engine's, no hub, no pop-up menu (Amber's controls are the ones shown).
+         if horizon_client::amber_input::active() {
+             self.mobile.ui.draw_keyboard(b, &self.gui.atlas);
++            if fibrus_pad::on() {
++                self.fibrus_draw(b);
++            }
+             return;
+         }
+         if !self.has_touch()
+@@ -414,6 +421,10 @@ impl Game<'_> {
+         // AmberLauncher: in the world Amber's controls take the touches, so one that gets here is no tap on a control the
+         // game no longer shows. On a menu or a screen the game takes them as ever.
+         if horizon_client::amber_input::active() && !self.pad_in_menu() {
++            // Fibrus: the lightest pad takes the world's touches (game/mobile_controls/fibrus_pad.rs).
++            if fibrus_pad::on() {
++                self.fibrus_touch(t);
++            }
+             return;
+         }
+         let [w, h] = self.touch_size();
+diff --git a/crates/horizon-client/src/game/mobile_controls/fibrus_pad.rs b/crates/horizon-client/src/game/mobile_controls/fibrus_pad.rs
+new file mode 100644
+index 0000000..bc03539
+--- /dev/null
++++ b/crates/horizon-client/src/game/mobile_controls/fibrus_pad.rs
+@@ -0,0 +1,154 @@
++//! Fibrus Pad: the touch controls of Fibrus Launcher, and nothing of the engine's own controls.
++//!
++//! The engine's controls (touch.rs, android_control_*.rs, the hub, the pop-up menu, the editor, the layouts) stay
++//! off, as `AMBER_CONTROLS` makes them. This is a second, much smaller thing next to them: the game thread's own
++//! touch event goes into [`logic::Pad`] (no heap, no lock, no JNI, no window of its own), what comes out goes the way
++//! Amber's controls send theirs (`android_custom_token_edge`, `amber_look`), and a handful of flat shapes are drawn.
++//! It runs only when `FIBRUS_PAD` is set (the launcher writes it to horizon-args.txt); `FIBRUS_PAD_SENS` scales the
++//! turn (default 1.0). With it unset nothing here runs.
++use super::*;
++use horizon_client::ui_theme::{Face, Ui, color};
++use logic::{BUTTONS, Btn, Out, Pad, Phase, Screen};
++use std::cell::RefCell;
++use std::sync::OnceLock;
++use std::time::Instant;
++
++mod logic;
++
++/// A frame later than this after the last one means the app was away: whatever the fingers held is let go.
++const AWAY_MS: u64 = 400;
++
++struct State {
++    pad: Pad,
++    epoch: Instant,
++    last_tick: u64,
++    size: [u32; 2],
++    gui: f32,
++}
++
++thread_local! {
++    static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
++}
++
++/// The pad is on.
++pub(super) fn on() -> bool {
++    static ON: OnceLock<bool> = OnceLock::new();
++    *ON.get_or_init(|| std::env::var_os("FIBRUS_PAD").is_some())
++}
++
++fn sens() -> f32 {
++    std::env::var("FIBRUS_PAD_SENS")
++        .ok()
++        .and_then(|v| v.trim().parse::<f32>().ok())
++        .unwrap_or(1.0)
++}
++
++/// The pad, and the time in milliseconds since it was first used. Game thread only.
++fn with<R>(f: impl FnOnce(&mut State, u64) -> R) -> R {
++    STATE.with(|cell| {
++        let mut slot = cell.borrow_mut();
++        let state = slot.get_or_insert_with(|| State {
++            pad: Pad::new(sens()),
++            epoch: Instant::now(),
++            last_tick: 0,
++            size: [0, 0],
++            gui: 1.0,
++        });
++        let now = state.epoch.elapsed().as_millis() as u64;
++        f(state, now)
++    })
++}
++
++impl Game<'_> {
++    /// A finger on the world (mobile_touch hands it over; menus and screens take theirs as ever).
++    pub(super) fn fibrus_touch(&mut self, t: &Touch) {
++        let phase = match t.phase {
++            TouchPhase::Started => Phase::Down,
++            TouchPhase::Moved => Phase::Move,
++            TouchPhase::Ended | TouchPhase::Cancelled => Phase::Up,
++        };
++        let size = self.touch_size();
++        let (x, y) = (t.location.x as f32, t.location.y as f32);
++        let out = with(|s, now| {
++            if s.size != size {
++                s.size = size;
++                s.gui = HudBatch::new(size).scale;
++            }
++            let screen = Screen { w: size[0] as f32, h: size[1] as f32, gui: s.gui };
++            s.pad.touch(screen, t.id, phase, x, y, now)
++        });
++        self.fibrus_apply(&out);
++    }
++
++    /// Once a frame (mobile_frame): a click's release, a finger that rested long enough, and a let-go when a menu opens.
++    pub(super) fn fibrus_frame(&mut self) {
++        let menu = self.pad_in_menu() || self.pending_save.is_some();
++        let out = with(|s, now| {
++            let away = now.saturating_sub(s.last_tick) > AWAY_MS;
++            s.last_tick = now;
++            if (menu || away) && s.pad.busy() {
++                s.pad.release_all()
++            } else if menu {
++                Out::default()
++            } else {
++                s.pad.tick(now)
++            }
++        });
++        self.fibrus_apply(&out);
++    }
++
++    /// Keys the way Amber's controls press them, and the turn the way its look layer makes it.
++    fn fibrus_apply(&mut self, out: &Out) {
++        for &(token, down) in out.tokens() {
++            self.android_custom_token_edge(token, down);
++        }
++        let (dx, dy) = out.look;
++        if (dx != 0.0 || dy != 0.0) && self.amber_look(dx, dy) {
++            // Same as amber_pump: a key's press asks for the grab and `capture` drops what `agent_pointer` says.
++            self.agent_pointer = true;
++        }
++    }
++
++    /// The buttons, and the stick while a finger is on it: flat plates, a few words. Nothing in a menu.
++    pub(super) fn fibrus_draw(&self, b: &mut HudBatch) {
++        if self.pad_in_menu() {
++            return;
++        }
++        let screen = Screen { w: b.width * b.scale, h: b.height * b.scale, gui: b.scale };
++        let mut ui = Ui::new(&self.gui.atlas, b, (-1.0, -1.0));
++        let d = ui.density;
++        STATE.with(|cell| {
++            let slot = cell.borrow();
++            let Some(state) = slot.as_ref() else {
++                return;
++            };
++            for btn in BUTTONS {
++                let r = screen.rect(btn);
++                let big = matches!(btn, Btn::Jump | Btn::Sneak | Btn::Hit);
++                let (w, h) = (r[2] / d, r[3] / d);
++                let alpha = if state.pad.lit(btn) { 0.38 } else { 0.16 };
++                let radius = if big { w / 2.0 } else { w * 0.3 };
++                ui.rounded(r[0] / d, r[1] / d, w, h, radius, color::with_alpha(color::WHITE, alpha));
++                let size = (w * if big { 0.2 } else { 0.28 }).clamp(8.0, 15.0);
++                ui.text_centered(
++                    Face::Semibold,
++                    size,
++                    (r[0] + r[2] / 2.0) / d,
++                    (r[1] + r[3] / 2.0) / d - size * 0.62,
++                    color::with_alpha(color::WHITE, 0.85),
++                    btn.label(),
++                );
++            }
++            if let Some((c, p, r)) = state.pad.stick(screen) {
++                let (dx, dy) = (p[0] - c[0], p[1] - c[1]);
++                let len = (dx * dx + dy * dy).sqrt().max(1.0);
++                let k = (len.min(r) / len) * 1.0;
++                let knob = [c[0] + dx * k, c[1] + dy * k];
++                ui.rounded((c[0] - r) / d, (c[1] - r) / d, 2.0 * r / d, 2.0 * r / d, r / d, color::with_alpha(color::WHITE, 0.10));
++                let kr = r * 0.4;
++                ui.rounded((knob[0] - kr) / d, (knob[1] - kr) / d, 2.0 * kr / d, 2.0 * kr / d, kr / d, color::with_alpha(color::WHITE, 0.34));
++            }
++        });
++        ui.finish();
++    }
++}
+diff --git a/crates/horizon-client/src/game/mobile_controls/fibrus_pad/logic.rs b/crates/horizon-client/src/game/mobile_controls/fibrus_pad/logic.rs
+new file mode 100644
+index 0000000..2e83c71
+--- /dev/null
++++ b/crates/horizon-client/src/game/mobile_controls/fibrus_pad/logic.rs
+@@ -0,0 +1,587 @@
++//! Fibrus Pad: the logic of the lightest touch controls the engine can have.
++//!
++//! No engine types here, no heap, no locks: a finger comes in, a fixed array of key edges and a turn come out. The
++//! game thread calls it straight from its own touch event (no JNI, no queue, no second window), and the game draws
++//! what [`Pad::buttons`] and [`Pad::stick`] say with a handful of flat quads.
++//!
++//! The screen, landscape, in three parts:
++//! * left of 42% of the width, a floating stick: wherever a finger lands it is the centre. Past a third of the way it
++//!   walks (W A S D, so eight ways); past the full radius forward it sprints.
++//! * the rest turns the view. A short tap uses (right click); resting a finger for 280 ms mines or hits (left click,
++//!   held until the finger lifts, and the view still turns).
++//! * a few buttons on top of both, and a tap on the hotbar picks the slot.
++
++/// A key or a mouse button by the game's own token.
++pub type Token = &'static str;
++
++pub const KEY_W: Token = "key.keyboard.w";
++pub const KEY_A: Token = "key.keyboard.a";
++pub const KEY_S: Token = "key.keyboard.s";
++pub const KEY_D: Token = "key.keyboard.d";
++pub const KEY_SPRINT: Token = "key.keyboard.left.control";
++pub const KEY_SNEAK: Token = "key.keyboard.left.shift";
++pub const MOUSE_LEFT: Token = "key.mouse.left";
++pub const MOUSE_RIGHT: Token = "key.mouse.right";
++const SLOTS: [Token; 9] = [
++    "key.keyboard.1",
++    "key.keyboard.2",
++    "key.keyboard.3",
++    "key.keyboard.4",
++    "key.keyboard.5",
++    "key.keyboard.6",
++    "key.keyboard.7",
++    "key.keyboard.8",
++    "key.keyboard.9",
++];
++
++/// Resting a finger this long on the view starts mining.
++pub const HOLD_MS: u64 = 280;
++/// A finger further than this (in `u`) from where it landed is turning the view, not tapping.
++const SLOP_U: f32 = 9.0;
++/// The stick: radius, and how far past it the centre follows the finger (in `u`).
++const STICK_R_U: f32 = 46.0;
++const STICK_FOLLOW: f32 = 1.5;
++/// Share of the stick's radius a finger must pass to walk that way.
++const WALK_AT: f32 = 0.30;
++/// Share of the radius past which forward is sprinting.
++const SPRINT_AT: f32 = 1.05;
++/// The stick's side of the screen (share of the width).
++const STICK_SIDE: f32 = 0.42;
++
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub enum Phase {
++    Down,
++    Move,
++    Up,
++}
++
++/// The buttons, in drawing order.
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub enum Btn {
++    Jump,
++    Sneak,
++    Hit,
++    Esc,
++    Inv,
++    Chat,
++    Drop,
++    View,
++}
++pub const BUTTONS: [Btn; 8] = [
++    Btn::Jump,
++    Btn::Sneak,
++    Btn::Hit,
++    Btn::Esc,
++    Btn::Inv,
++    Btn::Chat,
++    Btn::Drop,
++    Btn::View,
++];
++
++impl Btn {
++    pub fn token(self) -> Token {
++        match self {
++            Btn::Jump => "key.keyboard.space",
++            Btn::Sneak => KEY_SNEAK,
++            Btn::Hit => MOUSE_LEFT,
++            Btn::Esc => "key.keyboard.escape",
++            Btn::Inv => "key.keyboard.e",
++            Btn::Chat => "key.keyboard.t",
++            Btn::Drop => "key.keyboard.q",
++            Btn::View => "key.keyboard.f5",
++        }
++    }
++    pub fn label(self) -> &'static str {
++        match self {
++            Btn::Jump => "JUMP",
++            Btn::Sneak => "SNEAK",
++            Btn::Hit => "HIT",
++            Btn::Esc => "ESC",
++            Btn::Inv => "INV",
++            Btn::Chat => "CHAT",
++            Btn::Drop => "DROP",
++            Btn::View => "VIEW",
++        }
++    }
++    /// A tap flips it and it stays flipped (sneaking), instead of holding while the finger rests.
++    fn toggles(self) -> bool {
++        self == Btn::Sneak
++    }
++    fn index(self) -> usize {
++        BUTTONS.iter().position(|b| *b == self).unwrap_or(0)
++    }
++}
++
++/// The screen and the scale of the game's own HUD, in physical pixels.
++#[derive(Clone, Copy, Debug)]
++pub struct Screen {
++    pub w: f32,
++    pub h: f32,
++    /// The HUD's scale (GUI pixels to physical pixels): the hotbar is 182 by 22 of them.
++    pub gui: f32,
++}
++
++impl Screen {
++    /// One `u`: about a dp on a phone held in landscape.
++    pub fn u(&self) -> f32 {
++        (self.h / 360.0).max(1.0)
++    }
++    /// The button's rectangle `[x, y, w, h]`.
++    pub fn rect(&self, b: Btn) -> [f32; 4] {
++        let u = self.u();
++        let m = 20.0 * u;
++        let (jx, jy) = (self.w - m - 70.0 * u, self.h - m - 78.0 * u);
++        match b {
++            Btn::Jump => [jx, jy, 70.0 * u, 70.0 * u],
++            Btn::Hit => [jx - 66.0 * u, jy + 10.0 * u, 60.0 * u, 60.0 * u],
++            Btn::Sneak => [jx + 5.0 * u, jy - 66.0 * u, 60.0 * u, 60.0 * u],
++            Btn::Esc | Btn::Inv | Btn::Chat | Btn::Drop | Btn::View => {
++                let i = (b.index() - Btn::Esc.index()) as f32;
++                [self.w - m - 38.0 * u - i * 44.0 * u, 12.0 * u, 38.0 * u, 38.0 * u]
++            }
++        }
++    }
++    /// The hotbar's touch area (a little taller than drawn: a thumb is not a pixel).
++    fn hotbar(&self) -> [f32; 4] {
++        let (w, h) = (182.0 * self.gui, 22.0 * self.gui);
++        [self.w / 2.0 - w / 2.0, self.h - h - 6.0 * self.gui, w, h + 6.0 * self.gui]
++    }
++}
++
++fn inside(r: [f32; 4], x: f32, y: f32) -> bool {
++    x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3]
++}
++
++/// What a touch or a tick asks the game for: key edges in order, and the view's turn in pixels.
++#[derive(Default)]
++pub struct Out {
++    toks: [(Token, bool); 16],
++    n: usize,
++    pub look: (f32, f32),
++}
++
++impl Out {
++    fn tok(&mut self, t: Token, down: bool) {
++        if self.n < self.toks.len() {
++            self.toks[self.n] = (t, down);
++            self.n += 1;
++        }
++    }
++    pub fn tokens(&self) -> &[(Token, bool)] {
++        &self.toks[..self.n]
++    }
++}
++
++#[derive(Clone, Copy)]
++struct Stick {
++    id: u64,
++    /// Where it is centred, and where the finger is.
++    c: [f32; 2],
++    p: [f32; 2],
++}
++
++#[derive(Clone, Copy)]
++struct Look {
++    id: u64,
++    last: [f32; 2],
++    start: [f32; 2],
++    since: u64,
++    moved: bool,
++    mining: bool,
++}
++
++#[derive(Default)]
++pub struct Pad {
++    stick: Option<Stick>,
++    look: Option<Look>,
++    /// The finger on each button, and whether a toggle is on.
++    held: [Option<u64>; 8],
++    toggled: [bool; 8],
++    /// The finger on the hotbar and the key it pressed.
++    slot: Option<(u64, Token)>,
++    /// The stick's keys now: W, A, S, D, sprint.
++    walk: [bool; 5],
++    /// A click's release, owed to the next tick.
++    owed: Option<Token>,
++    /// Sensitivity of the turn.
++    pub sens: f32,
++}
++
++impl Pad {
++    pub fn new(sens: f32) -> Self {
++        Pad {
++            sens: if sens.is_finite() && sens > 0.0 { sens } else { 1.0 },
++            ..Pad::default()
++        }
++    }
++
++    /// One finger. `now` in milliseconds from any fixed start.
++    pub fn touch(&mut self, s: Screen, id: u64, phase: Phase, x: f32, y: f32, now: u64) -> Out {
++        let mut out = Out::default();
++        match phase {
++            Phase::Down => self.down(s, id, x, y, now, &mut out),
++            Phase::Move => self.moved(s, id, x, y, &mut out),
++            Phase::Up => self.up(s, id, &mut out),
++        }
++        out
++    }
++
++    /// Once a frame: a click's release, and a finger that has rested long enough on the view.
++    pub fn tick(&mut self, now: u64) -> Out {
++        let mut out = Out::default();
++        if let Some(t) = self.owed.take() {
++            out.tok(t, false);
++        }
++        if let Some(l) = &mut self.look {
++            if !l.moved && !l.mining && now.saturating_sub(l.since) >= HOLD_MS {
++                l.mining = true;
++                out.tok(MOUSE_LEFT, true);
++            }
++        }
++        out
++    }
++
++    /// A menu or a screen opened, or the app left: let go of everything.
++    pub fn release_all(&mut self) -> Out {
++        let mut out = Out::default();
++        self.set_walk([false; 5], &mut out);
++        if let Some(l) = self.look.take() {
++            if l.mining {
++                out.tok(MOUSE_LEFT, false);
++            }
++        }
++        for b in BUTTONS {
++            let i = b.index();
++            if self.held[i].take().is_some() && !b.toggles() {
++                out.tok(b.token(), false);
++            }
++            if self.toggled[i] {
++                self.toggled[i] = false;
++                out.tok(b.token(), false);
++            }
++        }
++        if let Some((_, t)) = self.slot.take() {
++            out.tok(t, false);
++        }
++        if let Some(t) = self.owed.take() {
++            out.tok(t, false);
++        }
++        self.stick = None;
++        out
++    }
++
++    /// Anything is held or on (so a menu opening has something to let go of).
++    pub fn busy(&self) -> bool {
++        self.stick.is_some()
++            || self.look.is_some()
++            || self.slot.is_some()
++            || self.owed.is_some()
++            || self.held.iter().any(Option::is_some)
++            || self.toggled.iter().any(|t| *t)
++    }
++
++    /// For drawing: is the button down, or on.
++    pub fn lit(&self, b: Btn) -> bool {
++        self.held[b.index()].is_some() || self.toggled[b.index()]
++    }
++
++    /// For drawing: the stick's centre, the finger, and the radius, in physical pixels.
++    pub fn stick(&self, s: Screen) -> Option<([f32; 2], [f32; 2], f32)> {
++        self.stick.map(|k| (k.c, k.p, STICK_R_U * s.u()))
++    }
++
++    fn down(&mut self, s: Screen, id: u64, x: f32, y: f32, now: u64, out: &mut Out) {
++        for b in BUTTONS {
++            if inside(s.rect(b), x, y) {
++                let i = b.index();
++                if self.held[i].is_none() {
++                    self.held[i] = Some(id);
++                    if b.toggles() {
++                        self.toggled[i] = !self.toggled[i];
++                        out.tok(b.token(), self.toggled[i]);
++                    } else {
++                        out.tok(b.token(), true);
++                    }
++                }
++                return;
++            }
++        }
++        if self.slot.is_none() && inside(s.hotbar(), x, y) {
++            let r = s.hotbar();
++            let i = (((x - r[0]) / (r[2] / 9.0)) as usize).min(8);
++            self.slot = Some((id, SLOTS[i]));
++            out.tok(SLOTS[i], true);
++            return;
++        }
++        if self.stick.is_none() && x < s.w * STICK_SIDE {
++            self.stick = Some(Stick { id, c: [x, y], p: [x, y] });
++            return;
++        }
++        if self.look.is_none() {
++            self.look = Some(Look { id, last: [x, y], start: [x, y], since: now, moved: false, mining: false });
++        }
++    }
++
++    fn moved(&mut self, s: Screen, id: u64, x: f32, y: f32, out: &mut Out) {
++        if let Some(k) = &mut self.stick {
++            if k.id == id {
++                k.p = [x, y];
++                let r = STICK_R_U * s.u();
++                let (dx, dy) = (x - k.c[0], y - k.c[1]);
++                let len = (dx * dx + dy * dy).sqrt();
++                let far = r * STICK_FOLLOW;
++                if len > far {
++                    // The centre follows a finger that runs away, so the stick never needs a second reach.
++                    let over = (len - far) / len;
++                    k.c[0] += dx * over;
++                    k.c[1] += dy * over;
++                }
++                let (nx, ny) = ((x - k.c[0]) / r, (y - k.c[1]) / r);
++                let walk = [ny < -WALK_AT, nx < -WALK_AT, ny > WALK_AT, nx > WALK_AT, ny < -SPRINT_AT];
++                self.set_walk(walk, out);
++                return;
++            }
++        }
++        if let Some(l) = &mut self.look {
++            if l.id == id {
++                let (dx, dy) = (x - l.last[0], y - l.last[1]);
++                l.last = [x, y];
++                if !l.moved {
++                    let (sx, sy) = (x - l.start[0], y - l.start[1]);
++                    if (sx * sx + sy * sy).sqrt() > SLOP_U * s.u() {
++                        l.moved = true;
++                    }
++                }
++                // Still inside the slop and not yet mining: a tap's tremble does not turn the view.
++                if l.moved || l.mining {
++                    out.look = (dx * self.sens, dy * self.sens);
++                }
++            }
++        }
++    }
++
++    fn up(&mut self, s: Screen, id: u64, out: &mut Out) {
++        let _ = s;
++        if self.stick.is_some_and(|k| k.id == id) {
++            self.stick = None;
++            self.set_walk([false; 5], out);
++            return;
++        }
++        if self.look.is_some_and(|l| l.id == id) {
++            if let Some(l) = self.look.take() {
++                if l.mining {
++                    out.tok(MOUSE_LEFT, false);
++                } else if !l.moved {
++                    // A tap: a click, its release owed to the next tick (the game takes a press for a whole tick).
++                    out.tok(MOUSE_RIGHT, true);
++                    self.owed = Some(MOUSE_RIGHT);
++                }
++            }
++            return;
++        }
++        if self.slot.is_some_and(|(f, _)| f == id) {
++            if let Some((_, t)) = self.slot.take() {
++                out.tok(t, false);
++            }
++            return;
++        }
++        for b in BUTTONS {
++            let i = b.index();
++            if self.held[i] == Some(id) {
++                self.held[i] = None;
++                if !b.toggles() {
++                    out.tok(b.token(), false);
++                }
++                return;
++            }
++        }
++    }
++
++    fn set_walk(&mut self, want: [bool; 5], out: &mut Out) {
++        const KEYS: [Token; 5] = [KEY_W, KEY_A, KEY_S, KEY_D, KEY_SPRINT];
++        for i in 0..5 {
++            if want[i] != self.walk[i] {
++                self.walk[i] = want[i];
++                out.tok(KEYS[i], want[i]);
++            }
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    const S: Screen = Screen { w: 2400.0, h: 1080.0, gui: 3.0 };
++
++    fn toks(o: &Out) -> Vec<(Token, bool)> {
++        o.tokens().to_vec()
++    }
++    fn center(b: Btn) -> (f32, f32) {
++        let r = S.rect(b);
++        (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0)
++    }
++
++    #[test]
++    fn stick_walks_and_sprints_and_lets_go() {
++        let mut p = Pad::new(1.0);
++        assert!(toks(&p.touch(S, 1, Phase::Down, 300.0, 700.0, 0)).is_empty());
++        // u = 3, radius 138 px: 0.3 of it is 41 px.
++        assert!(toks(&p.touch(S, 1, Phase::Move, 300.0, 680.0, 10)).is_empty());
++        assert_eq!(toks(&p.touch(S, 1, Phase::Move, 300.0, 640.0, 20)), vec![(KEY_W, true)]);
++        // diagonal: right too
++        assert_eq!(toks(&p.touch(S, 1, Phase::Move, 360.0, 640.0, 30)), vec![(KEY_D, true)]);
++        // far forward: sprint (1.05 R = 145 px)
++        assert_eq!(toks(&p.touch(S, 1, Phase::Move, 300.0, 540.0, 40)), vec![(KEY_D, false), (KEY_SPRINT, true)]);
++        let up = toks(&p.touch(S, 1, Phase::Up, 300.0, 540.0, 50));
++        assert_eq!(up, vec![(KEY_W, false), (KEY_SPRINT, false)]);
++        assert!(!p.busy());
++    }
++
++    #[test]
++    fn stick_centre_follows_a_runaway_finger() {
++        let mut p = Pad::new(1.0);
++        p.touch(S, 1, Phase::Down, 300.0, 700.0, 0);
++        p.touch(S, 1, Phase::Move, 300.0, 100.0, 10);
++        let (c, f, r) = p.stick(S).unwrap();
++        let d = ((f[0] - c[0]).powi(2) + (f[1] - c[1]).powi(2)).sqrt();
++        assert!(d <= r * STICK_FOLLOW + 0.5, "{d}");
++    }
++
++    #[test]
++    fn tap_uses_and_releases_next_tick() {
++        let mut p = Pad::new(1.0);
++        p.touch(S, 7, Phase::Down, 1500.0, 300.0, 0);
++        let up = toks(&p.touch(S, 7, Phase::Up, 1500.0, 301.0, 100));
++        assert_eq!(up, vec![(MOUSE_RIGHT, true)]);
++        assert_eq!(toks(&p.tick(116)), vec![(MOUSE_RIGHT, false)]);
++        assert!(!p.busy());
++    }
++
++    #[test]
++    fn rest_mines_until_lifted() {
++        let mut p = Pad::new(1.0);
++        p.touch(S, 7, Phase::Down, 1500.0, 300.0, 0);
++        assert!(toks(&p.tick(100)).is_empty());
++        assert_eq!(toks(&p.tick(HOLD_MS)), vec![(MOUSE_LEFT, true)]);
++        assert!(toks(&p.tick(HOLD_MS + 16)).is_empty());
++        assert_eq!(toks(&p.touch(S, 7, Phase::Up, 1500.0, 300.0, 600)), vec![(MOUSE_LEFT, false)]);
++    }
++
++    #[test]
++    fn drag_turns_and_never_clicks() {
++        let mut p = Pad::new(1.0);
++        p.touch(S, 7, Phase::Down, 1500.0, 300.0, 0);
++        let a = p.touch(S, 7, Phase::Move, 1503.0, 300.0, 5);
++        assert_eq!(a.look, (0.0, 0.0), "inside the slop");
++        let b = p.touch(S, 7, Phase::Move, 1560.0, 310.0, 10);
++        assert_eq!(b.look, (57.0, 10.0));
++        let c = p.touch(S, 7, Phase::Move, 1570.0, 310.0, 15);
++        assert_eq!(c.look, (10.0, 0.0));
++        assert!(toks(&p.tick(HOLD_MS + 50)).is_empty(), "a turning finger never starts mining");
++        assert!(toks(&p.touch(S, 7, Phase::Up, 1570.0, 310.0, 900)).is_empty());
++    }
++
++    #[test]
++    fn sensitivity_scales_the_turn() {
++        let mut p = Pad::new(2.0);
++        p.touch(S, 7, Phase::Down, 1500.0, 300.0, 0);
++        let b = p.touch(S, 7, Phase::Move, 1560.0, 300.0, 10);
++        assert_eq!(b.look, (120.0, 0.0));
++        assert_eq!(Pad::new(f32::NAN).sens, 1.0);
++        assert_eq!(Pad::new(-3.0).sens, 1.0);
++    }
++
++    #[test]
++    fn mining_finger_still_turns() {
++        let mut p = Pad::new(1.0);
++        p.touch(S, 7, Phase::Down, 1500.0, 300.0, 0);
++        p.tick(HOLD_MS);
++        let o = p.touch(S, 7, Phase::Move, 1504.0, 300.0, 400);
++        assert_eq!(o.look, (4.0, 0.0));
++    }
++
++    #[test]
++    fn buttons_hold_and_sneak_toggles() {
++        let mut p = Pad::new(1.0);
++        let (x, y) = center(Btn::Jump);
++        assert_eq!(toks(&p.touch(S, 3, Phase::Down, x, y, 0)), vec![("key.keyboard.space", true)]);
++        assert!(p.lit(Btn::Jump));
++        assert_eq!(toks(&p.touch(S, 3, Phase::Up, x, y, 9)), vec![("key.keyboard.space", false)]);
++
++        let (x, y) = center(Btn::Sneak);
++        assert_eq!(toks(&p.touch(S, 4, Phase::Down, x, y, 0)), vec![(KEY_SNEAK, true)]);
++        assert!(toks(&p.touch(S, 4, Phase::Up, x, y, 9)).is_empty());
++        assert!(p.lit(Btn::Sneak), "stays on after the finger lifts");
++        assert_eq!(toks(&p.touch(S, 5, Phase::Down, x, y, 20)), vec![(KEY_SNEAK, false)]);
++        p.touch(S, 5, Phase::Up, x, y, 29);
++        assert!(!p.busy());
++    }
++
++    #[test]
++    fn button_beats_view_and_stick_and_buttons_do_not_overlap() {
++        for a in BUTTONS {
++            for b in BUTTONS {
++                if a != b {
++                    let (ra, rb) = (S.rect(a), S.rect(b));
++                    let apart = ra[0] + ra[2] <= rb[0] || rb[0] + rb[2] <= ra[0] || ra[1] + ra[3] <= rb[1] || rb[1] + rb[3] <= ra[1];
++                    assert!(apart, "{a:?} overlaps {b:?}");
++                }
++            }
++            let r = S.rect(a);
++            assert!(r[0] >= 0.0 && r[1] >= 0.0 && r[0] + r[2] <= S.w && r[1] + r[3] <= S.h, "{a:?} off screen");
++        }
++    }
++
++    #[test]
++    fn hotbar_picks_the_slot_under_the_finger() {
++        let mut p = Pad::new(1.0);
++        let h = S.hotbar();
++        let mid = h[0] + h[2] / 2.0;
++        assert_eq!(toks(&p.touch(S, 1, Phase::Down, mid, S.h - 20.0, 0)), vec![("key.keyboard.5", true)]);
++        assert_eq!(toks(&p.touch(S, 1, Phase::Up, mid, S.h - 20.0, 5)), vec![("key.keyboard.5", false)]);
++        let first = toks(&p.touch(S, 2, Phase::Down, h[0] + 2.0, S.h - 20.0, 9));
++        assert_eq!(first, vec![("key.keyboard.1", true)]);
++        p.release_all();
++        let last = toks(&p.touch(S, 3, Phase::Down, h[0] + h[2] - 1.0, S.h - 20.0, 9));
++        assert_eq!(last, vec![("key.keyboard.9", true)]);
++    }
++
++    #[test]
++    fn release_all_lets_go_of_everything() {
++        let mut p = Pad::new(1.0);
++        p.touch(S, 1, Phase::Down, 300.0, 700.0, 0);
++        p.touch(S, 1, Phase::Move, 300.0, 540.0, 5);
++        let (x, y) = center(Btn::Jump);
++        p.touch(S, 2, Phase::Down, x, y, 6);
++        let (x, y) = center(Btn::Sneak);
++        p.touch(S, 3, Phase::Down, x, y, 7);
++        p.touch(S, 3, Phase::Up, x, y, 8);
++        p.touch(S, 4, Phase::Down, 1500.0, 300.0, 9);
++        p.tick(9 + HOLD_MS);
++        assert!(p.busy());
++        let o = toks(&p.release_all());
++        for t in [KEY_W, KEY_SPRINT, "key.keyboard.space", KEY_SNEAK, MOUSE_LEFT] {
++            assert!(o.contains(&(t, false)), "{t} not released: {o:?}");
++        }
++        assert!(o.iter().all(|(_, down)| !down));
++        assert!(!p.busy());
++        assert!(toks(&p.release_all()).is_empty());
++    }
++
++    #[test]
++    fn two_thumbs_work_at_once() {
++        let mut p = Pad::new(1.0);
++        p.touch(S, 1, Phase::Down, 300.0, 700.0, 0); // stick
++        p.touch(S, 2, Phase::Down, 1600.0, 400.0, 0); // view
++        assert_eq!(toks(&p.touch(S, 1, Phase::Move, 300.0, 600.0, 5)), vec![(KEY_W, true)]);
++        assert_eq!(p.touch(S, 2, Phase::Move, 1700.0, 400.0, 6).look, (100.0, 0.0));
++    }
++
++    #[test]
++    fn a_finger_that_never_meets_the_tokens_is_harmless() {
++        let mut p = Pad::new(1.0);
++        assert!(toks(&p.touch(S, 99, Phase::Move, 10.0, 10.0, 0)).is_empty());
++        assert!(toks(&p.touch(S, 99, Phase::Up, 10.0, 10.0, 0)).is_empty());
++    }
++}

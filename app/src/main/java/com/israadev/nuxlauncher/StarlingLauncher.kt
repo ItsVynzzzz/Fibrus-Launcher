@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import com.israadev.nuxlauncher.data.AccountStore
+import com.israadev.nuxlauncher.data.UiPrefs
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -70,8 +71,11 @@ object StarlingLauncher {
             writeAccountsFile(dir, AccountStore.state.value.accounts.map { it.username }, account.username)
             // AMBER_EMBEDDED=1: mesin tahu ia dijalankan launcher (pemberitahuan pembaruan bawaannya mati).
             // AMBER_CONTROLS=1: kontrol sentuh, tombol hub, dan menu pop-up bawaan mesin MATI. Layar kosong;
-            //   kontrolmu sendiri dipasang lewat starling/StarlingOverlay.kt.
-            writePrivate(File(dir, ARGS_FILE), "AMBER_EMBEDDED=1\nAMBER_CONTROLS=1\n")
+            //   (Fibrus Pad menggantikannya, lihat FIBRUS_PAD di bawah.)
+            // FIBRUS_PAD=1: kontrol sentuh Fibrus Pad, ditangani di dalam mesin (patch fibrus1/0007); FIBRUS_PAD_SENS: kecepatan
+            //   putar kamera (1.0 = bawaan). Tanpa FIBRUS_PAD layar kosong tanpa kontrol sama sekali.
+            val pad = if (UiPrefs.padOn) "FIBRUS_PAD=1\nFIBRUS_PAD_SENS=${"%.2f".format(java.util.Locale.US, UiPrefs.lookSensPercent / 100f)}\n" else ""
+            writePrivate(File(dir, ARGS_FILE), "AMBER_EMBEDDED=1\nAMBER_CONTROLS=1\n$pad")
             context.startActivity(
                 Intent()
                     .setClassName(context.packageName, ACTIVITY_CLASS)
