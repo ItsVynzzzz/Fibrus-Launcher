@@ -1,0 +1,15 @@
+diff --git a/crates/horizon-client-render/src/gfx.rs b/crates/horizon-client-render/src/gfx.rs
+index 523d3ff..7d98606 100644
+--- a/crates/horizon-client-render/src/gfx.rs
++++ b/crates/horizon-client-render/src/gfx.rs
+@@ -10059,7 +10059,9 @@ impl Renderer {
+         if let Some(radius) = menu_blur {
+             let format = self.config.format;
+             let device = &self.device;
+-            let software = is_software(self.info.device_type);
++            // Fibrus: a phone blurs at half size too, as a software adapter does (the same blur on a quarter of the
++            // pixels); at full size it took 4.5 ms of an Adreno 610's frame at 1604x720.
++            let software = is_software(self.info.device_type) || cfg!(target_os = "android");
+             self.menu_blur
+                 .get_or_insert_with(|| crate::menu_blur::MenuBlur::new(device, format, software))
+                 .apply(
