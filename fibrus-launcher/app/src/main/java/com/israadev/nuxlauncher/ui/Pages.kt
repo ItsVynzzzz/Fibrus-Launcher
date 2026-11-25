@@ -154,6 +154,43 @@ fun SettingsScreen(onNavigate: (String) -> Unit) {
                 valueRange = 40f..250f,
                 colors = SliderDefaults.colors(thumbColor = AmberUi.AccentSoft, activeTrackColor = AmberUi.AccentSoft, inactiveTrackColor = AmberUi.Border)
             )
+            Text("Movement", color = AmberUi.TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
+            Text(
+                "Stick appears under your thumb. D-pad is a fixed 3 x 3 block with a RUN toggle, like PojavLauncher and Zalith.",
+                color = AmberUi.TextDim, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp)
+            )
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PillButton("Stick", { UiPrefs.setDpadOn(context, false) }, filled = !UiPrefs.dpadOn)
+                PillButton("D-pad", { UiPrefs.setDpadOn(context, true) }, filled = UiPrefs.dpadOn)
+            }
+            Text("Button size: ${UiPrefs.padScalePercent}%", color = AmberUi.TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
+            Slider(
+                value = UiPrefs.padScalePercent.toFloat(),
+                onValueChange = { UiPrefs.setPadScale(context, it.toInt(), save = false) },
+                onValueChangeFinished = { UiPrefs.setPadScale(context, UiPrefs.padScalePercent, save = true) },
+                valueRange = 60f..130f,
+                colors = SliderDefaults.colors(thumbColor = AmberUi.AccentSoft, activeTrackColor = AmberUi.AccentSoft, inactiveTrackColor = AmberUi.Border)
+            )
+            Text("Button opacity: ${UiPrefs.padAlphaPercent}%", color = AmberUi.TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+            Slider(
+                value = UiPrefs.padAlphaPercent.toFloat(),
+                onValueChange = { UiPrefs.setPadAlpha(context, it.toInt(), save = false) },
+                onValueChangeFinished = { UiPrefs.setPadAlpha(context, UiPrefs.padAlphaPercent, save = true) },
+                valueRange = 5f..60f,
+                colors = SliderDefaults.colors(thumbColor = AmberUi.AccentSoft, activeTrackColor = AmberUi.AccentSoft, inactiveTrackColor = AmberUi.Border)
+            )
+        }
+        GlassCard {
+            Text("Performance", color = AmberUi.Text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            Text(
+                "Unlock FPS turns VSync off and removes every frame cap, including battery mode. Minecraft's own Max Framerate slider leaves VSync on, " +
+                    "which holds the game to the screen's refresh rate. Uses more battery and makes the phone warmer. Takes effect the next time the game opens.",
+                color = AmberUi.TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)
+            )
+            Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PillButton("Unlocked", { UiPrefs.setUnlockFps(context, true) }, filled = UiPrefs.unlockFps)
+                PillButton("Game decides", { UiPrefs.setUnlockFps(context, false) }, filled = !UiPrefs.unlockFps)
+            }
         }
         GlassCard {
             Text("Engine", color = AmberUi.Text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)

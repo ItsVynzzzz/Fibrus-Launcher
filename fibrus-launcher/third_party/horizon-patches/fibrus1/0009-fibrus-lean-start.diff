@@ -1,0 +1,29 @@
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index 4d58445..146ee27 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -22178,14 +22178,22 @@ pub fn run_with() -> Result<()> {
+     // Bedrock's touch buttons, fetched from Mojang once (bedrock_touch.rs) where the resources
+     // came without them (prepared on a computer, or no network then): drawn from the next start,
+     // or this one's if they come before its GUI atlas.
++    // Fibrus: the engine's own touch controls are off (AMBER_CONTROLS) and Fibrus Pad draws flat plates with no
++    // texture, so nobody draws these buttons. Skipping them takes a network download off the start-up path (the
++    // first one runs inline there) and a thread that tried again at every start when the phone had no network.
++    // Menus fall back to Starling's own glyphs, as they do when the download fails.
++    let touch_textures = !horizon_client::amber_input::active();
+     #[cfg(target_os = "android")]
+-    if options.execution_role.is_client()
++    if touch_textures
++        && options.execution_role.is_client()
+         && vanilla_root.join("horizon-resources.json").is_file()
+         && let Err(e) = horizon_client::android_control_assets::fetch(&vanilla_root, |_, _| {})
+     {
+         log::warn!("Original Android control textures: {e}");
+     }
+-    if options.execution_role.is_client() && !horizon_client::bedrock_touch::present(&vanilla_root)
++    if touch_textures
++        && options.execution_role.is_client()
++        && !horizon_client::bedrock_touch::present(&vanilla_root)
+     {
+         let root = vanilla_root.clone();
+         let _ = std::thread::Builder::new()

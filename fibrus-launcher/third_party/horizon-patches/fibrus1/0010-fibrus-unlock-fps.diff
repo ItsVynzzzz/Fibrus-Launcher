@@ -1,0 +1,120 @@
+diff --git a/crates/horizon-client-render/src/settings.rs b/crates/horizon-client-render/src/settings.rs
+index 378144f..ceed67e 100644
+--- a/crates/horizon-client-render/src/settings.rs
++++ b/crates/horizon-client-render/src/settings.rs
+@@ -370,7 +370,26 @@ fn put_s(f: &mut OptionsFile, key: &str, v: &str) {
+         f.set(key, V::Str(v.to_owned()));
+     }
+ }
++/// `FIBRUS_UNLOCK_FPS` as the launcher writes it: only `1` turns the frame cap off.
++fn unlock_fps_from(value: Option<&str>) -> bool {
++    value.is_some_and(|v| v.trim() == "1")
++}
++
+ impl Settings {
++    /// Fibrus: the launcher asked for no frame cap at all (`FIBRUS_UNLOCK_FPS=1`, read once). It does what a
++    /// player's Max Framerate "Unlimited" never did on a phone: VSync stays on after that, and VSync is the display's
++    /// own rate (60 on most phones), and battery mode adds its own cap of 60 and the throttles of a window out of
++    /// focus. Nothing is written to options.txt for it, so turning it off in the launcher gives the saved settings back.
++    pub fn fibrus_unlock(&self) -> bool {
++        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++        *ON.get_or_init(|| unlock_fps_from(std::env::var("FIBRUS_UNLOCK_FPS").ok().as_deref()))
++    }
++
++    /// No VSync and no frame cap: Horizon's own Max FPS mode, or Fibrus's switch for the same.
++    pub fn uncapped(&self) -> bool {
++        self.extras.max_fps_mode || self.fibrus_unlock()
++    }
++
+     /// The index in `video_modes` of the preferred fullscreen mode, -1 (the desktop's own mode)
+     /// when none is set or the monitor lacks it: `Monitor.indexOfMode`.
+     pub fn video_mode_index(&self) -> i32 {
+@@ -933,6 +952,26 @@ pub enum Opt {
+ mod tests {
+     use super::*;
+     #[test]
++    fn only_a_one_unlocks_the_frame_cap_and_max_fps_mode_alone_does_too() {
++        // The launcher's switch: anything but 1 leaves the player's own settings.
++        for (value, on) in [
++            (Some("1"), true),
++            (Some(" 1\n"), true),
++            (Some("0"), false),
++            (Some(""), false),
++            (Some("true"), false),
++            (None, false),
++        ] {
++            assert_eq!(unlock_fps_from(value), on, "{value:?}");
++        }
++        // Without the switch (the test process has none) VSync and the cap follow Horizon's own Max FPS mode.
++        let mut s = Settings::default();
++        assert!(!s.fibrus_unlock());
++        assert!(!s.uncapped());
++        s.extras.max_fps_mode = true;
++        assert!(s.uncapped());
++    }
++    #[test]
+     fn the_narrator_reads_its_status_and_the_voice_under_master() {
+         let s = Settings::parse("narrator:2\nsoundCategory_master:0.5\nsoundCategory_voice:0.5\n");
+         assert_eq!(s.narrator(), horizon_narrator::Status::Chat);
+diff --git a/crates/horizon-client/src/game/options.rs b/crates/horizon-client/src/game/options.rs
+index 7908ed0..963d6ee 100644
+--- a/crates/horizon-client/src/game/options.rs
++++ b/crates/horizon-client/src/game/options.rs
+@@ -627,10 +627,7 @@ impl Game<'_> {
+             r.gamma = s.gamma;
+             r.fullbright = s.extras.fullbright;
+             r.improved_transparency = s.improved_transparency;
+-            r.set_present_mode(
+-                s.vsync && !s.extras.max_fps_mode,
+-                s.horizon.present_mode,
+-            );
++            r.set_present_mode(s.vsync && !s.uncapped(), s.horizon.present_mode);
+             r.animated_textures = s.horizon.animated_textures && !game_animations_disabled;
+             r.screenshot_quality = s.horizon.screenshot_quality;
+             r.set_mipmap_levels(s.mipmap_levels.max(0) as u32);
+@@ -746,21 +743,26 @@ impl Game<'_> {
+             has_screen: self.title.is_some() || self.screen != super::Screen::Playing,
+             has_overlay: false,
+         };
+-        let requested_fps = if self.settings.extras.max_fps_mode {
++        let requested_fps = if self.settings.uncapped() {
+             260
+         } else {
+             self.settings.max_fps as i32
+         };
+         let limit = framerate_limit(requested_fps, context);
+-        let limit = if self.settings.extras.battery_performance {
++        // Fibrus's unlock leaves out both battery caps (60 in a world, 30 out of one): it is the player's word
++        // that the phone should run as fast as it can. The throttles of a minimised or idle window stay.
++        let limit = if self.settings.extras.battery_performance && !self.settings.fibrus_unlock() {
+             limit.min(60)
+         } else {
+             limit
+         };
+-        let limit = self
+-            .settings
+-            .horizon
+-            .battery_limit(limit, self.title.is_none(), self.focused);
++        let limit = if self.settings.fibrus_unlock() {
++            limit
++        } else {
++            self.settings
++                .horizon
++                .battery_limit(limit, self.title.is_none(), self.focused)
++        };
+         // A native mod may only lower it (`native_framerate_limit`).
+         let mut hooked = limit;
+         self.native_framerate_limit(
+diff --git a/crates/horizon-client/src/game/startup_menu.rs b/crates/horizon-client/src/game/startup_menu.rs
+index db5402d..ebf580a 100644
+--- a/crates/horizon-client/src/game/startup_menu.rs
++++ b/crates/horizon-client/src/game/startup_menu.rs
+@@ -638,7 +638,7 @@ impl Loading {
+             renderer.animated_textures =
+                 self.settings.horizon.animated_textures && !game_animations_disabled;
+             renderer.set_present_mode(
+-                self.settings.vsync && !self.settings.extras.max_fps_mode,
++                self.settings.vsync && !self.settings.uncapped(),
+                 self.settings.horizon.present_mode,
+             );
+         }
