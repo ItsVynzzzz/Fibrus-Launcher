@@ -74,17 +74,8 @@ object StarlingLauncher {
             //   (Fibrus Pad menggantikannya, lihat FIBRUS_PAD di bawah.)
             // FIBRUS_PAD=1: kontrol sentuh Fibrus Pad, ditangani di dalam mesin (patch fibrus1/0007); FIBRUS_PAD_SENS: kecepatan
             //   putar kamera (1.0 = bawaan). Tanpa FIBRUS_PAD layar kosong tanpa kontrol sama sekali.
-            // FIBRUS_PAD_MODE=dpad: tombol arah kiri berupa D-pad 3 x 3 tetap (gaya Pojav/Zalith), bukan stik; FIBRUS_PAD_SCALE:
-            //   ukuran tombol (1.0 = bawaan); FIBRUS_PAD_ALPHA: kepekatan pelat tombol (patch fibrus1/0008).
-            // FIBRUS_UNLOCK_FPS=1: VSync mati dan tanpa batas bingkai (patch fibrus1/0010). Tidak bergantung pada Fibrus Pad.
-            fun num(percent: Int) = "%.2f".format(java.util.Locale.US, percent / 100f)
-            val pad = if (UiPrefs.padOn) {
-                "FIBRUS_PAD=1\nFIBRUS_PAD_SENS=${num(UiPrefs.lookSensPercent)}\n" +
-                    (if (UiPrefs.dpadOn) "FIBRUS_PAD_MODE=dpad\n" else "") +
-                    "FIBRUS_PAD_SCALE=${num(UiPrefs.padScalePercent)}\nFIBRUS_PAD_ALPHA=${num(UiPrefs.padAlphaPercent)}\n"
-            } else ""
-            val fps = if (UiPrefs.unlockFps) "FIBRUS_UNLOCK_FPS=1\n" else ""
-            writePrivate(File(dir, ARGS_FILE), "AMBER_EMBEDDED=1\nAMBER_CONTROLS=1\n$pad$fps")
+            val pad = if (UiPrefs.padOn) "FIBRUS_PAD=1\nFIBRUS_PAD_SENS=${"%.2f".format(java.util.Locale.US, UiPrefs.lookSensPercent / 100f)}\n" else ""
+            writePrivate(File(dir, ARGS_FILE), "AMBER_EMBEDDED=1\nAMBER_CONTROLS=1\n$pad${UiPrefs.labArgs()}")
             context.startActivity(
                 Intent()
                     .setClassName(context.packageName, ACTIVITY_CLASS)
