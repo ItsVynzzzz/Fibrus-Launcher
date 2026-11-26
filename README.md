@@ -70,6 +70,8 @@ mesin tidak mengunduh tekstur tombol Bedrock, patch `0009`).
   `ForeignLayoutConverter`), disimpan sebagai preset. Tombol sistem yang kurang (ESC/MENU, HIDE GUI) ditambahkan lagi supaya
   menu game tetap terjangkau.
 - Kode Amber yang dibawa: `core/controls/` (model tombol, preset, impor, konverter) dan `core/horizon/RustTouchLayout.kt`.
+  `MacroScript`, `MacroRunner` dan `KeycodeCatalog` ikut hanya karena pembaca layout memakainya untuk memvalidasi tombol makro;
+  Fibrus tidak menjalankan makro.
   Berkas mesin asli disalin ke `horizon-touch.amber-backup.json` dan dikembalikan bila Amber layout dimatikan.
 - Yang tidak dibawa: editor tata letak di dalam game (Amber memakai jendela terpisah yang membebani GPU), pemutar makro
   (tombol makro dilewati, kombo tombol tetap jalan), sidebar Amber (MENU = Esc), dan tombol FPS/keyboard layar. Kecepatan
