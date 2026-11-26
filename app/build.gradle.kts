@@ -34,30 +34,15 @@ android {
         }
     }
 
-    // Tanda tangan dari keystore milik pemilik repo, lewat variabel lingkungan (di CI dari secret). Tanpa itu dipakai kunci
-    // debug bawaan Android, yang di CI berubah tiap run sehingga APK-nya tidak bisa memperbarui build sebelumnya.
-    val keystorePath = System.getenv("FIBRUS_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
-    signingConfigs {
-        if (keystorePath != null) {
-            create("fibrus") {
-                storeFile = file(keystorePath)
-                storePassword = System.getenv("FIBRUS_KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("FIBRUS_KEY_ALIAS")
-                keyPassword = System.getenv("FIBRUS_KEY_PASSWORD")
-            }
-        }
-    }
-    val appSigning = signingConfigs.findByName("fibrus") ?: signingConfigs.getByName("debug")
-
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = appSigning
+            // Kunci debug bawaan Android: cukup untuk uji. Ganti dengan keystore milikmu sebelum merilis.
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {
             isMinifyEnabled = false
-            signingConfig = appSigning
         }
     }
 
@@ -118,6 +103,7 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.material3)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.gson) // tata letak kontrol Amber (core/controls): baca/tulis dan impor layout
     implementation("androidx.compose.material:material-icons-extended") // versi dari Compose BOM
 
     debugImplementation(libs.androidx.ui.tooling)

@@ -94,26 +94,6 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # Keystore dari secret repo: FIBRUS_KEYSTORE_BASE64, FIBRUS_KEYSTORE_PASSWORD, FIBRUS_KEY_ALIAS, FIBRUS_KEY_PASSWORD.
-      - name: Siapkan tanda tangan
-        env:
-          KS_B64: ${{ secrets.FIBRUS_KEYSTORE_BASE64 }}
-          FIBRUS_KEYSTORE_PASSWORD: ${{ secrets.FIBRUS_KEYSTORE_PASSWORD }}
-          FIBRUS_KEY_ALIAS: ${{ secrets.FIBRUS_KEY_ALIAS }}
-          FIBRUS_KEY_PASSWORD: ${{ secrets.FIBRUS_KEY_PASSWORD }}
-        run: |
-          if [ -n "$KS_B64" ]; then
-            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/fibrus.keystore"
-            {
-              echo "FIBRUS_KEYSTORE_FILE=$RUNNER_TEMP/fibrus.keystore"
-              echo "FIBRUS_KEYSTORE_PASSWORD=$FIBRUS_KEYSTORE_PASSWORD"
-              echo "FIBRUS_KEY_ALIAS=$FIBRUS_KEY_ALIAS"
-              echo "FIBRUS_KEY_PASSWORD=$FIBRUS_KEY_PASSWORD"
-            } >> "$GITHUB_ENV"
-          else
-            echo "::warning title=Tanpa keystore::Secret FIBRUS_KEYSTORE_BASE64 belum diisi. APK memakai kunci debug acak dan tidak bisa memperbarui build sebelumnya."
-          fi
-
       - name: Bangun APK
         env:
           # Child mode di atas hanya untuk skrip pembangun; Gradle/fetch memilih mesinnya sendiri.

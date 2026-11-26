@@ -4,6 +4,8 @@ import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import com.israadev.nuxlauncher.core.controls.ControlLayouts
+import com.israadev.nuxlauncher.core.horizon.RustTouchLayout
 import com.israadev.nuxlauncher.data.AccountStore
 import com.israadev.nuxlauncher.data.UiPrefs
 import org.json.JSONArray
@@ -74,8 +76,29 @@ object StarlingLauncher {
             //   (Fibrus Pad menggantikannya, lihat FIBRUS_PAD di bawah.)
             // FIBRUS_PAD=1: kontrol sentuh Fibrus Pad, ditangani di dalam mesin (patch fibrus1/0007); FIBRUS_PAD_SENS: kecepatan
             //   putar kamera (1.0 = bawaan). Tanpa FIBRUS_PAD layar kosong tanpa kontrol sama sekali.
-            val pad = if (UiPrefs.padOn) "FIBRUS_PAD=1\nFIBRUS_PAD_SENS=${"%.2f".format(java.util.Locale.US, UiPrefs.lookSensPercent / 100f)}\n" else ""
-            writePrivate(File(dir, ARGS_FILE), "AMBER_EMBEDDED=1\nAMBER_CONTROLS=1\n$pad${UiPrefs.labArgs()}")
+            // FIBRUS_PAD_MODE=dpad: tombol arah kiri berupa D-pad 3 x 3 tetap (gaya Pojav/Zalith), bukan stik; FIBRUS_PAD_SCALE:
+            //   ukuran tombol (1.0 = bawaan); FIBRUS_PAD_ALPHA: kepekatan pelat tombol (patch fibrus1/0008).
+            // FIBRUS_UNLOCK_FPS=1: VSync mati dan tanpa batas bingkai (patch fibrus1/0010). Tidak bergantung pada Fibrus Pad.
+            fun num(percent: Int) = "%.2f".format(java.util.Locale.US, percent / 100f)
+            val pad = if (UiPrefs.padOn) {
+                "FIBRUS_PAD=1\nFIBRUS_PAD_SENS=${num(UiPrefs.lookSensPercent)}\n" +
+                    (if (UiPrefs.dpadOn) "FIBRUS_PAD_MODE=dpad\n" else "") +
+                    "FIBRUS_PAD_SCALE=${num(UiPrefs.padScalePercent)}\nFIBRUS_PAD_ALPHA=${num(UiPrefs.padAlphaPercent)}\n"
+            } else ""
+            val fps = if (UiPrefs.unlockFps) "FIBRUS_UNLOCK_FPS=1\n" else ""
+            // Kontrol Amber (UiPrefs.amberControls): tata letak ala Zalith/Pojav ditulis ke horizon-touch.json, lalu kontrol
+            //   bawaan mesin sendiri yang menggambar dan memprosesnya (tanpa jendela Android di atas game). Karena itu
+            //   AMBER_CONTROLS dan FIBRUS_PAD TIDAK ditulis. Mati = berkas mesin dikembalikan seperti semula.
+            val amber = UiPrefs.amberControls
+            RustTouchLayout.sync(
+                context, amber,
+                if (amber) ControlLayouts.activeButtons(context, UiPrefs.amberPresetId) else emptyList(),
+                engineDir = dir, lookDrag = UiPrefs.lookDragOn
+            )
+            // FIBRUS_NO_TOUCH_TEXTURES=1: mesin tidak mengunduh tekstur tombol sentuh Bedrock (patch fibrus1/0009); tata letak
+            //   Amber tidak memakainya.
+            val base = if (amber) "AMBER_EMBEDDED=1\nFIBRUS_NO_TOUCH_TEXTURES=1\n" else "AMBER_EMBEDDED=1\nAMBER_CONTROLS=1\n$pad"
+            writePrivate(File(dir, ARGS_FILE), base + fps)
             context.startActivity(
                 Intent()
                     .setClassName(context.packageName, ACTIVITY_CLASS)

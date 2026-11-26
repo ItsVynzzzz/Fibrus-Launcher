@@ -142,29 +142,62 @@ fun SettingsScreen(onNavigate: (String) -> Unit) {
                 "Touch controls drawn and handled inside the engine, with no overlay. Takes effect the next time the game opens.",
                 color = AmberUi.TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)
             )
-            Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PillButton("On", { UiPrefs.setPadOn(context, true) }, filled = UiPrefs.padOn)
-                PillButton("Off", { UiPrefs.setPadOn(context, false) }, filled = !UiPrefs.padOn)
+            FlowRow(
+                Modifier.padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                PillButton("Fibrus Pad", { UiPrefs.setPadOn(context, true) }, filled = UiPrefs.padOn)
+                PillButton("Amber layout", { UiPrefs.setAmberControls(context, true) }, filled = UiPrefs.amberControls)
+                PillButton("Off", { UiPrefs.setPadOn(context, false); UiPrefs.setAmberControls(context, false) }, filled = !UiPrefs.padOn && !UiPrefs.amberControls)
             }
-            Text("Camera speed: ${UiPrefs.lookSensPercent}%", color = AmberUi.TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
-            Slider(
-                value = UiPrefs.lookSensPercent.toFloat(),
-                onValueChange = { UiPrefs.setLookSens(context, it.toInt(), save = false) },
-                onValueChangeFinished = { UiPrefs.setLookSens(context, UiPrefs.lookSensPercent, save = true) },
-                valueRange = 40f..250f,
-                colors = SliderDefaults.colors(thumbColor = AmberUi.AccentSoft, activeTrackColor = AmberUi.AccentSoft, inactiveTrackColor = AmberUi.Border)
-            )
+            if (UiPrefs.amberControls) AmberControlsSection()
+            if (UiPrefs.padOn) {
+                Text("Camera speed: ${UiPrefs.lookSensPercent}%", color = AmberUi.TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
+                Slider(
+                    value = UiPrefs.lookSensPercent.toFloat(),
+                    onValueChange = { UiPrefs.setLookSens(context, it.toInt(), save = false) },
+                    onValueChangeFinished = { UiPrefs.setLookSens(context, UiPrefs.lookSensPercent, save = true) },
+                    valueRange = 40f..250f,
+                    colors = SliderDefaults.colors(thumbColor = AmberUi.AccentSoft, activeTrackColor = AmberUi.AccentSoft, inactiveTrackColor = AmberUi.Border)
+                )
+                Text("Movement", color = AmberUi.TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
+                Text(
+                    "Stick appears under your thumb. D-pad is a fixed 3 x 3 block with a RUN toggle, like PojavLauncher and Zalith.",
+                    color = AmberUi.TextDim, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp)
+                )
+                Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PillButton("Stick", { UiPrefs.setDpadOn(context, false) }, filled = !UiPrefs.dpadOn)
+                    PillButton("D-pad", { UiPrefs.setDpadOn(context, true) }, filled = UiPrefs.dpadOn)
+                }
+                Text("Button size: ${UiPrefs.padScalePercent}%", color = AmberUi.TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
+                Slider(
+                    value = UiPrefs.padScalePercent.toFloat(),
+                    onValueChange = { UiPrefs.setPadScale(context, it.toInt(), save = false) },
+                    onValueChangeFinished = { UiPrefs.setPadScale(context, UiPrefs.padScalePercent, save = true) },
+                    valueRange = 60f..130f,
+                    colors = SliderDefaults.colors(thumbColor = AmberUi.AccentSoft, activeTrackColor = AmberUi.AccentSoft, inactiveTrackColor = AmberUi.Border)
+                )
+                Text("Button opacity: ${UiPrefs.padAlphaPercent}%", color = AmberUi.TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+                Slider(
+                    value = UiPrefs.padAlphaPercent.toFloat(),
+                    onValueChange = { UiPrefs.setPadAlpha(context, it.toInt(), save = false) },
+                    onValueChangeFinished = { UiPrefs.setPadAlpha(context, UiPrefs.padAlphaPercent, save = true) },
+                    valueRange = 5f..60f,
+                    colors = SliderDefaults.colors(thumbColor = AmberUi.AccentSoft, activeTrackColor = AmberUi.AccentSoft, inactiveTrackColor = AmberUi.Border)
+                )
+            }
         }
         GlassCard {
-            Text("Performance lab (experimental)", color = AmberUi.Text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            Text("Performance", color = AmberUi.Text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
             Text(
-                "Engine switches to compare with F3 (look at GPU/CPU ms and the pass list). Each is off by default. Takes effect the next time the game opens.",
+                "Unlock FPS turns VSync off and removes every frame cap, including battery mode. Minecraft's own Max Framerate slider leaves VSync on, " +
+                    "which holds the game to the screen's refresh rate. Uses more battery and makes the phone warmer. Takes effect the next time the game opens.",
                 color = AmberUi.TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)
             )
-            LabRow("Submit thread (CPU-bound frames)", "lab_submit", UiPrefs.labSubmit, listOf("Default" to 0, "On" to 1, "Off" to 2))
-            LabRow("World upscale filter", "lab_upscale", UiPrefs.labUpscale, listOf("Sharp" to 0, "Fast" to 1))
-            LabRow("Shadow map reused for N frames", "lab_shadow", UiPrefs.labShadow, listOf("Default" to 0, "3" to 3, "4" to 4))
-            LabRow("GPU occlusion culling", "lab_cull", UiPrefs.labCull, listOf("Default" to 0, "Off" to 1))
+            Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PillButton("Unlocked", { UiPrefs.setUnlockFps(context, true) }, filled = UiPrefs.unlockFps)
+                PillButton("Game decides", { UiPrefs.setUnlockFps(context, false) }, filled = !UiPrefs.unlockFps)
+            }
         }
         GlassCard {
             Text("Engine", color = AmberUi.Text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
@@ -210,18 +243,6 @@ fun SettingsScreen(onNavigate: (String) -> Unit) {
                 Spacer(Modifier.width(8.dp))
                 PillButton("Delete", { GameFiles.deleteAll(context); confirmDelete = false }, danger = true, filled = false)
             }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun LabRow(title: String, key: String, selected: Int, options: List<Pair<String, Int>>) {
-    val context = LocalContext.current
-    Text(title, color = AmberUi.TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        options.forEach { (label, value) ->
-            PillButton(label, { UiPrefs.setLab(context, key, value) }, filled = selected == value)
         }
     }
 }
